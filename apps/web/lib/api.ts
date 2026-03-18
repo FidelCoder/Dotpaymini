@@ -1,4 +1,4 @@
-import type { BackendUserProfile } from "@/lib/product";
+import type { BackendUserProfile, QuoteResult, TransactionIntent, TransactionFlowType } from "@/lib/product";
 
 type Envelope<T> = {
   success: boolean;
@@ -66,4 +66,44 @@ export async function setBackendPin(address: string, pin: string, oldPin?: strin
     method: "PATCH",
     body: JSON.stringify({ pin, oldPin: oldPin || null }),
   });
+}
+
+export async function createBackendTransactionQuote(input: {
+  userAddress: string;
+  flowType: TransactionFlowType;
+  amount: number;
+  currency?: "KES" | "USD";
+  phoneNumber?: string | null;
+  paybillNumber?: string | null;
+  tillNumber?: string | null;
+  accountReference?: string | null;
+  businessId?: string | null;
+  idempotencyKey?: string | null;
+}) {
+  return apiRequest<QuoteResult>("/api/transactions/quotes", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listBackendTransactions(filters: {
+  userAddress: string;
+  flowType?: TransactionFlowType;
+  status?: string;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  params.set("userAddress", filters.userAddress);
+  if (filters.flowType) params.set("flowType", filters.flowType);
+  if (filters.status) params.set("status", filters.status);
+  if (filters.limit) params.set("limit", String(filters.limit));
+
+  const result = await apiRequest<{ transactions: TransactionIntent[] }>(
+    `/api/transactions?${params.toString()}`
+  );
+  return result.transactions;
+}
+
+export async function getBackendTransaction(transactionId: string) {
+  return apiRequest<TransactionIntent>(`/api/transactions/${encodeURIComponent(transactionId)}`);
 }

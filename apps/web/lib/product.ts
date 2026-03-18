@@ -2,6 +2,115 @@ export type FlowStatus = "live" | "building" | "blocked";
 
 export type ProfileStatus = "needs_profile" | "needs_pin" | "active";
 
+export type TransactionFlowType = "onramp" | "offramp" | "paybill" | "buygoods";
+
+export type TransactionStatus =
+  | "created"
+  | "quoted"
+  | "awaiting_user_authorization"
+  | "awaiting_onchain_funding"
+  | "mpesa_submitted"
+  | "mpesa_processing"
+  | "succeeded"
+  | "failed"
+  | "refund_pending"
+  | "refunded";
+
+export type TransactionQuote = {
+  quoteId: string;
+  currency: "KES" | "USD";
+  amountRequested: number;
+  amountKes: number;
+  amountUsd: number;
+  rateKesPerUsd: number;
+  feeAmountKes: number;
+  networkFeeKes: number;
+  totalDebitKes: number;
+  expectedReceiveKes: number;
+  expiresAt: string;
+  snapshotAt: string;
+};
+
+export type TransactionTargets = {
+  phoneNumber: string | null;
+  paybillNumber: string | null;
+  tillNumber: string | null;
+  accountReference: string | null;
+};
+
+export type TransactionIntent = {
+  transactionId: string;
+  flowType: TransactionFlowType;
+  status: TransactionStatus;
+  userAddress: string;
+  businessId: string | null;
+  idempotencyKey: string | null;
+  quote: TransactionQuote;
+  targets: TransactionTargets;
+  authorization: {
+    pinProvided: boolean;
+    signature: string | null;
+    signedAt: string | null;
+    nonce: string | null;
+  };
+  onchain: {
+    txHash: string | null;
+    chainId: number | null;
+    required: boolean;
+    verificationStatus: "not_required" | "pending" | "verified" | "failed";
+    tokenAddress: string | null;
+    tokenSymbol: string | null;
+    treasuryAddress: string | null;
+    expectedAmountUsd: number;
+    expectedAmountUnits: string | null;
+    fundedAmountUsd: number;
+    fundedAmountUnits: string | null;
+    fromAddress: string | null;
+    toAddress: string | null;
+    logIndex: number | null;
+    verifiedBy: string | null;
+    verificationError: string | null;
+    verifiedAt: string | null;
+  };
+  daraja: {
+    merchantRequestId: string | null;
+    checkoutRequestId: string | null;
+    conversationId: string | null;
+    originatorConversationId: string | null;
+    responseCode: string | null;
+    responseDescription: string | null;
+    resultCode: number | null;
+    resultCodeRaw: string | null;
+    resultDesc: string | null;
+    receiptNumber: string | null;
+    customerMessage: string | null;
+    callbackReceivedAt: string | null;
+  };
+  refund: {
+    status: "none" | "pending" | "completed" | "failed";
+    reason: string | null;
+    txHash: string | null;
+    initiatedAt: string | null;
+    completedAt: string | null;
+  };
+  history: Array<{
+    from: TransactionStatus | null;
+    to: TransactionStatus;
+    reason: string | null;
+    source: string;
+    at: string;
+  }>;
+  metadata: {
+    source: string;
+    ipAddress: string | null;
+    userAgent: string | null;
+    tags: string[];
+    extra: unknown;
+  };
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type BackendUserProfile = {
   id: string;
   address: string;
@@ -41,6 +150,12 @@ export type ProductSession = {
   profilePictureUrl: string | null;
   loggedInAt: string;
   userProfile: BackendUserProfile | null;
+};
+
+export type QuoteResult = {
+  transaction: TransactionIntent;
+  quote: TransactionQuote;
+  idempotent: boolean;
 };
 
 export const flowCards: FlowCard[] = [

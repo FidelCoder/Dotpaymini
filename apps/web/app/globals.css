@@ -409,6 +409,28 @@ button {
   box-shadow: 0 0 0 3px rgba(123, 242, 200, 0.12);
 }
 
+.segment-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.segment {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-soft);
+  padding: 12px 14px;
+  font-weight: 700;
+}
+
+.segment.active {
+  background: rgba(123, 242, 200, 0.12);
+  border-color: rgba(123, 242, 200, 0.28);
+  color: var(--text);
+}
+
 .error-banner,
 .success-banner {
   margin: 0;

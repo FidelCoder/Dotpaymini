@@ -26,6 +26,7 @@ This repo now includes:
 - backend-backed user profile sync with stable DotPay IDs
 - product confirmation name and PIN setup
 - transaction intent, quote creation, and status-transition foundations
+- first quote-triggering UI for Send, Pay, Add Funds, and Activity
 - a minimal Express API service
 - reference rules, parity mapping, and task breakdown docs
 
@@ -62,6 +63,7 @@ API:
 - backend user profile foundation
 - onboarding, confirmation name, and PIN foundation
 - transaction intent and quote foundation
+- first web quote and activity surfaces
 - backend scaffold for product APIs
 - product parity map from current DotPay
 - implementation rules and task breakdown

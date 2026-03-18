@@ -77,9 +77,9 @@ Acceptance:
 
 ## Immediate Next Build Slice
 
-- wire web-side transaction proxy routes and the first quote-triggering UI
 - port M-Pesa initiation routes for:
   - cashout
   - paybill
   - buygoods
+- connect the new quote UI to initiation and transaction-detail polling
 - start callback and receipt timeline handling

@@ -1,0 +1,339 @@
+"use client";
+
+import Link from "next/link";
+import { useMemo, useState, type FormEvent } from "react";
+import { AppShell } from "@/components/app-shell";
+import type { ProductSession, QuoteResult, TransactionFlowType } from "@/lib/product";
+
+type QuoteVariant = "send" | "pay" | "add-funds";
+
+type QuoteEnvelope = {
+  success: boolean;
+  message?: string;
+  idempotent?: boolean;
+  data?: QuoteResult;
+};
+
+const FLOW_LABELS: Record<TransactionFlowType, string> = {
+  onramp: "Add funds",
+  offramp: "Cash out",
+  paybill: "PayBill",
+  buygoods: "Till",
+};
+
+function getDefaultFlow(variant: QuoteVariant): TransactionFlowType {
+  if (variant === "add-funds") return "onramp";
+  if (variant === "pay") return "paybill";
+  return "offramp";
+}
+
+function titleForVariant(variant: QuoteVariant) {
+  if (variant === "add-funds") {
+    return {
+      eyebrow: "Onramp Quote",
+      title: "Add Funds",
+      subtitle: "Create the first real onramp quote using the new Dotpaymini transaction engine.",
+    };
+  }
+  if (variant === "pay") {
+    return {
+      eyebrow: "Merchant Quote",
+      title: "Pay",
+      subtitle: "Generate a PayBill or Till quote and lock the transaction intent in the backend before settlement is wired.",
+    };
+  }
+  return {
+    eyebrow: "Cashout Quote",
+    title: "Send",
+    subtitle: "Start with the M-Pesa cashout quote flow so the next payment step has a real transaction record to build on.",
+  };
+}
+
+function formatKes(value: number) {
+  return new Intl.NumberFormat("en-KE", {
+    style: "currency",
+    currency: "KES",
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function formatUsd(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+export function QuoteWorkbench({
+  session,
+  variant,
+}: {
+  session: ProductSession | null;
+  variant: QuoteVariant;
+}) {
+  const [flowType, setFlowType] = useState<TransactionFlowType>(getDefaultFlow(variant));
+  const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState<"KES" | "USD">("KES");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [paybillNumber, setPaybillNumber] = useState("");
+  const [tillNumber, setTillNumber] = useState("");
+  const [accountReference, setAccountReference] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<QuoteResult | null>(null);
+
+  const copy = useMemo(() => titleForVariant(variant), [variant]);
+  const profileStatus = session?.userProfile?.profileStatus || null;
+  const needsSetup = profileStatus && profileStatus !== "active";
+  const numericAmount = Number(amount);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/transactions/quotes", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          flowType,
+          amount: numericAmount,
+          currency,
+          phoneNumber: phoneNumber || null,
+          paybillNumber: paybillNumber || null,
+          tillNumber: tillNumber || null,
+          accountReference: accountReference || null,
+        }),
+      });
+
+      const payload = (await response.json()) as QuoteEnvelope;
+      if (!response.ok || !payload.success || !payload.data) {
+        throw new Error(payload.message || "Failed to create quote.");
+      }
+
+      setResult(payload.data);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Failed to create quote.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <AppShell eyebrow={copy.eyebrow} title={copy.title} subtitle={copy.subtitle} session={session}>
+      {!session ? (
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h2 className="panel-title">Sign in required</h2>
+              <p className="panel-copy">Open the home screen and complete Wallet Auth before creating a quote.</p>
+            </div>
+          </div>
+        </section>
+      ) : (
+        <>
+          {needsSetup ? (
+            <section className="note">
+              Setup is not complete yet. You can still preview quote creation, but the real settlement flows should use a finished profile.
+              <span> </span>
+              <Link href="/settings">Finish setup</Link>
+            </section>
+          ) : null}
+
+          <section className="panel">
+            <div className="panel-header">
+              <div>
+                <h2 className="panel-title">Quote builder</h2>
+                <p className="panel-copy">
+                  This is the first real UI on top of the transaction engine. It creates a backend quote and transaction intent, but it does not submit M-Pesa yet.
+                </p>
+              </div>
+            </div>
+
+            {variant === "pay" ? (
+              <div className="segment-row">
+                <button
+                  type="button"
+                  className={`segment${flowType === "paybill" ? " active" : ""}`}
+                  onClick={() => setFlowType("paybill")}
+                >
+                  PayBill
+                </button>
+                <button
+                  type="button"
+                  className={`segment${flowType === "buygoods" ? " active" : ""}`}
+                  onClick={() => setFlowType("buygoods")}
+                >
+                  Till
+                </button>
+              </div>
+            ) : null}
+
+            <form className="form-stack" onSubmit={handleSubmit}>
+              <label className="field-label" htmlFor={`${variant}-amount`}>
+                Amount
+              </label>
+              <input
+                id={`${variant}-amount`}
+                className="text-input"
+                inputMode="decimal"
+                value={amount}
+                onChange={(event) => {
+                  setError(null);
+                  setAmount(event.target.value);
+                }}
+                placeholder={currency === "KES" ? "1500" : "12.50"}
+              />
+
+              <div className="segment-row">
+                <button
+                  type="button"
+                  className={`segment${currency === "KES" ? " active" : ""}`}
+                  onClick={() => setCurrency("KES")}
+                >
+                  KES
+                </button>
+                <button
+                  type="button"
+                  className={`segment${currency === "USD" ? " active" : ""}`}
+                  onClick={() => setCurrency("USD")}
+                >
+                  USD
+                </button>
+              </div>
+
+              {(flowType === "onramp" || flowType === "offramp" || flowType === "paybill") && (
+                <>
+                  <label className="field-label" htmlFor={`${variant}-phone`}>
+                    Phone number
+                  </label>
+                  <input
+                    id={`${variant}-phone`}
+                    className="text-input"
+                    value={phoneNumber}
+                    onChange={(event) => setPhoneNumber(event.target.value)}
+                    placeholder="254700000001"
+                  />
+                </>
+              )}
+
+              {flowType === "paybill" && (
+                <>
+                  <label className="field-label" htmlFor={`${variant}-paybill`}>
+                    PayBill number
+                  </label>
+                  <input
+                    id={`${variant}-paybill`}
+                    className="text-input"
+                    value={paybillNumber}
+                    onChange={(event) => setPaybillNumber(event.target.value)}
+                    placeholder="600000"
+                  />
+                </>
+              )}
+
+              {flowType === "buygoods" && (
+                <>
+                  <label className="field-label" htmlFor={`${variant}-till`}>
+                    Till number
+                  </label>
+                  <input
+                    id={`${variant}-till`}
+                    className="text-input"
+                    value={tillNumber}
+                    onChange={(event) => setTillNumber(event.target.value)}
+                    placeholder="300584"
+                  />
+                </>
+              )}
+
+              {(flowType === "paybill" || flowType === "buygoods") && (
+                <>
+                  <label className="field-label" htmlFor={`${variant}-reference`}>
+                    Account reference
+                  </label>
+                  <input
+                    id={`${variant}-reference`}
+                    className="text-input"
+                    value={accountReference}
+                    onChange={(event) => setAccountReference(event.target.value)}
+                    placeholder="INV-100"
+                  />
+                </>
+              )}
+
+              {error ? <p className="error-banner">{error}</p> : null}
+              <div className="cta-row">
+                <button
+                  type="submit"
+                  className="button"
+                  disabled={submitting || !Number.isFinite(numericAmount) || numericAmount <= 0}
+                >
+                  {submitting ? "Creating quote..." : `Create ${FLOW_LABELS[flowType]} quote`}
+                </button>
+              </div>
+            </form>
+          </section>
+
+          {result ? (
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <h2 className="panel-title">Quote created</h2>
+                  <p className="panel-copy">
+                    The backend stored the transaction intent and returned the quote below. The actual initiation step is the next backend slice.
+                  </p>
+                </div>
+                <span className="pill live">{result.transaction.status}</span>
+              </div>
+
+              <div className="grid two">
+                <div className="mini-card">
+                  <strong>{result.transaction.transactionId}</strong>
+                  <span>Transaction intent ID</span>
+                </div>
+                <div className="mini-card">
+                  <strong>{result.quote.quoteId}</strong>
+                  <span>Quote ID</span>
+                </div>
+                <div className="mini-card">
+                  <strong>{formatKes(result.quote.totalDebitKes)}</strong>
+                  <span>Total debit</span>
+                </div>
+                <div className="mini-card">
+                  <strong>{formatUsd(result.quote.amountUsd)}</strong>
+                  <span>USD side</span>
+                </div>
+              </div>
+
+              <ul className="list">
+                <li className="list-item">
+                  <div>
+                    <strong>Flow</strong>
+                    <span>{FLOW_LABELS[result.transaction.flowType]}</span>
+                  </div>
+                </li>
+                <li className="list-item">
+                  <div>
+                    <strong>Expires</strong>
+                    <span>{new Date(result.quote.expiresAt).toLocaleString()}</span>
+                  </div>
+                </li>
+                <li className="list-item">
+                  <div>
+                    <strong>Expected receive</strong>
+                    <span>{formatKes(result.quote.expectedReceiveKes)}</span>
+                  </div>
+                </li>
+              </ul>
+            </section>
+          ) : null}
+        </>
+      )}
+    </AppShell>
+  );
+}
