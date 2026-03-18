@@ -1,0 +1,18 @@
+{
+  "name": "dotpaymini",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n web,api -c blue,green \"npm run dev --workspace @dotpaymini/web\" \"npm run dev --workspace @dotpaymini/api\"",
+    "dev:web": "npm run dev --workspace @dotpaymini/web",
+    "dev:api": "npm run dev --workspace @dotpaymini/api",
+    "build": "npm run build --workspace @dotpaymini/web && npm run build --workspace @dotpaymini/api",
+    "start": "concurrently -n web,api -c blue,green \"npm run start --workspace @dotpaymini/web\" \"npm run start --workspace @dotpaymini/api\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

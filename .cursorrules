@@ -1,0 +1,29 @@
+## Scope
+- Build `Dotpaymini` as a single monorepo with two apps: `apps/web` for the World Mini App and `apps/api` for the backend/API layer.
+- Maintain product parity with the current DotPay flows in `DotPayFE` and `DotPayBE`: auth, dashboard, send, pay, add funds, activity, settings, users, transactions, receipts, and notifications.
+- Prefer incremental delivery: foundation first, then flow-by-flow parity.
+
+## Architecture
+- Keep frontend and backend responsibilities separate even though they live in one repo.
+- Reuse business rules from the current product where practical, but adapt chain-facing flows to World Mini App primitives.
+- Treat the backend as the source of truth for quotes, payment intents, verification, transaction state, and M-Pesa settlement.
+
+## World Mini App Rules
+- Use Wallet Auth as the primary login flow.
+- Verify Wallet Auth and Pay results on the backend or trusted server routes; never trust client payloads.
+- Keep the UI mobile-first with bottom navigation and short, touch-friendly flows.
+- Prefer usernames over raw wallet addresses in the UI whenever a username is available.
+
+## Chain Strategy
+- Keep chain config isolated in env files and shared constants.
+- Default to test-safe placeholders in code and env examples.
+- Note the current World docs constraint: Mini App transaction testing is mainnet-only, so mainnet QA is required before production launch.
+
+## Security
+- Never read, print, copy, or commit secrets from `.env` files.
+- Use `.env.example` placeholders only.
+- Do not add private keys to the frontend.
+
+## Docs
+- Keep `docs/REFERENCE_RULES.md` and `docs/TASK_BREAKDOWN.md` up to date when scope changes materially.
+- Document important platform constraints and source them with official World docs URLs.
