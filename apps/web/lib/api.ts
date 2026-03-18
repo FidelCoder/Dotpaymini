@@ -107,3 +107,50 @@ export async function listBackendTransactions(filters: {
 export async function getBackendTransaction(transactionId: string) {
   return apiRequest<TransactionIntent>(`/api/transactions/${encodeURIComponent(transactionId)}`);
 }
+
+async function initiateBackendMpesa(path: string, input: {
+  transactionId: string;
+  userAddress: string;
+  pin: string;
+  signature?: string | null;
+  signedAt?: string | null;
+  nonce?: string | null;
+}) {
+  return apiRequest<TransactionIntent>(path, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function initiateBackendOfframp(input: {
+  transactionId: string;
+  userAddress: string;
+  pin: string;
+  signature?: string | null;
+  signedAt?: string | null;
+  nonce?: string | null;
+}) {
+  return initiateBackendMpesa("/api/mpesa/offramp/initiate", input);
+}
+
+export async function initiateBackendPaybill(input: {
+  transactionId: string;
+  userAddress: string;
+  pin: string;
+  signature?: string | null;
+  signedAt?: string | null;
+  nonce?: string | null;
+}) {
+  return initiateBackendMpesa("/api/mpesa/merchant/paybill/initiate", input);
+}
+
+export async function initiateBackendBuygoods(input: {
+  transactionId: string;
+  userAddress: string;
+  pin: string;
+  signature?: string | null;
+  signedAt?: string | null;
+  nonce?: string | null;
+}) {
+  return initiateBackendMpesa("/api/mpesa/merchant/buygoods/initiate", input);
+}
