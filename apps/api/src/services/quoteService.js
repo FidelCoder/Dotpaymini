@@ -1,0 +1,91 @@
+const crypto = require("crypto");
+
+const FEE_BPS_BY_FLOW = {
+  onramp: 0,
+  offramp: 0,
+  paybill: 0,
+  buygoods: 0,
+};
+
+function round2(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function toPositiveNumber(value, name) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`${name} must be a positive number.`);
+  }
+  return n;
+}
+
+function generateQuoteId() {
+  return `Q${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+}
+
+function getQuoteDefaults() {
+  const ttlSeconds = Math.max(30, Number(process.env.QUOTE_TTL_SECONDS || 300));
+  const defaultRateKesPerUsd = Math.max(1, Number(process.env.QUOTE_DEFAULT_KES_PER_USD || 130));
+  return {
+    ttlSeconds,
+    defaultRateKesPerUsd,
+  };
+}
+
+function buildQuote({ flowType, amount, currency = "KES", kesPerUsd }) {
+  const amountRequested = toPositiveNumber(amount, "amount");
+  const normalizedCurrency = String(currency || "KES").toUpperCase();
+  if (!["KES", "USD"].includes(normalizedCurrency)) {
+    throw new Error("currency must be KES or USD.");
+  }
+
+  const defaults = getQuoteDefaults();
+  const rateKesPerUsd =
+    Number.isFinite(Number(kesPerUsd)) && Number(kesPerUsd) > 0
+      ? Number(kesPerUsd)
+      : defaults.defaultRateKesPerUsd;
+
+  const amountKes =
+    normalizedCurrency === "KES"
+      ? amountRequested
+      : round2(amountRequested * rateKesPerUsd);
+  const amountUsd =
+    normalizedCurrency === "USD"
+      ? amountRequested
+      : round2(amountRequested / rateKesPerUsd);
+
+  const feeBps = FEE_BPS_BY_FLOW[flowType] ?? 0;
+  const feeAmountKes = round2((amountKes * feeBps) / 10000);
+  const networkFeeKes = 0;
+  const totalDebitKes = round2(amountKes);
+  const expectedReceiveKes = round2(amountKes);
+
+  const ttlMs = defaults.ttlSeconds * 1000;
+  const now = new Date();
+
+  return {
+    quoteId: generateQuoteId(),
+    currency: normalizedCurrency,
+    amountRequested: round2(amountRequested),
+    amountKes,
+    amountUsd,
+    rateKesPerUsd: round2(rateKesPerUsd),
+    feeAmountKes,
+    networkFeeKes,
+    totalDebitKes,
+    expectedReceiveKes,
+    expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
+    snapshotAt: now.toISOString(),
+  };
+}
+
+function isQuoteExpired(quote) {
+  if (!quote?.expiresAt) return true;
+  return new Date(quote.expiresAt).getTime() < Date.now();
+}
+
+module.exports = {
+  FEE_BPS_BY_FLOW,
+  buildQuote,
+  isQuoteExpired,
+};

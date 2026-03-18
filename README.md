@@ -25,6 +25,7 @@ This repo now includes:
 - Wallet Auth nonce + SIWE verification routes
 - backend-backed user profile sync with stable DotPay IDs
 - product confirmation name and PIN setup
+- transaction intent, quote creation, and status-transition foundations
 - a minimal Express API service
 - reference rules, parity mapping, and task breakdown docs
 
@@ -60,6 +61,7 @@ API:
 - Wallet Auth foundation
 - backend user profile foundation
 - onboarding, confirmation name, and PIN foundation
+- transaction intent and quote foundation
 - backend scaffold for product APIs
 - product parity map from current DotPay
 - implementation rules and task breakdown

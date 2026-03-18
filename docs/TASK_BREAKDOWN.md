@@ -77,9 +77,9 @@ Acceptance:
 
 ## Immediate Next Build Slice
 
-- create the shared transaction intent model for:
-  - pay
+- wire web-side transaction proxy routes and the first quote-triggering UI
+- port M-Pesa initiation routes for:
   - cashout
   - paybill
   - buygoods
-- start porting the existing quote and transaction state machine
+- start callback and receipt timeline handling

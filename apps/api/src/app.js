@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const { transactionsRouter } = require("./routes/transactions");
 const { usersRouter } = require("./routes/users");
 
 const app = express();
@@ -41,7 +42,7 @@ const capabilities = [
     id: "mpesa-engine",
     label: "M-Pesa engine",
     status: "building",
-    detail: "Quote, funding, callback, and receipt state machine will be ported from DotPayBE.",
+    detail: "Quote creation, transaction IDs, idempotency, and state-machine foundations are now in place. Daraja initiation is next.",
   },
   {
     id: "world-pay",
@@ -67,6 +68,7 @@ app.get("/api/capabilities", (_req, res) => {
 });
 
 app.use("/api/users", usersRouter);
+app.use("/api/transactions", transactionsRouter);
 
 app.get("/api/parity", (_req, res) => {
   res.json({
@@ -74,7 +76,7 @@ app.get("/api/parity", (_req, res) => {
     sourceRepos: ["DotPayFE", "DotPayBE"],
     targetRepo: "Dotpaymini",
     strategy: "single-monorepo-two-apps",
-    nextPort: "transaction-intent-model",
+    nextPort: "mpesa-initiation-routes",
   });
 });
 
