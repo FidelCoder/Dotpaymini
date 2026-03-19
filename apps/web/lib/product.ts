@@ -129,6 +129,14 @@ export type BackendUserProfile = {
   lastLoginAt: string;
 };
 
+export type RecipientLookupResult = {
+  address: string;
+  username: string | null;
+  worldUsername: string | null;
+  dotpayId: string | null;
+  profilePictureUrl: string | null;
+};
+
 export type FlowCard = {
   href: string;
   label: string;
@@ -184,6 +192,14 @@ export const flowCards: FlowCard[] = [
     status: "building",
   },
   {
+    href: "/receive",
+    label: "Receive",
+    icon: "↓",
+    title: "Receive and share",
+    description: "Share your DotPay ID, wallet address, and receive identifiers inside the mini app.",
+    status: "live",
+  },
+  {
     href: "/activity",
     label: "Activity",
     icon: "≣",
@@ -211,8 +227,8 @@ export const phaseMilestones: Milestone[] = [
   },
   {
     name: "M-Pesa state machine",
-    detail: "Next port from DotPayBE into the new API service.",
-    status: "building",
+    detail: "Real Daraja submission, funding verification, and callback-driven state updates now power outbound M-Pesa flows.",
+    status: "live",
   },
   {
     name: "In-app payment QA",

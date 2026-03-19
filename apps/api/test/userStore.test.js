@@ -6,6 +6,7 @@ const { mkdir, readFile, rm } = require("fs/promises");
 
 const {
   findUserByAddress,
+  lookupRecipient,
   setProductIdentity,
   setUserPin,
   upsertSessionUser,
@@ -94,6 +95,44 @@ test("setProductIdentity and setUserPin complete the onboarding state machine", 
       filePath,
     });
     assert.equal(verified, true);
+  } finally {
+    await rm(tempDirPath, { recursive: true, force: true });
+  }
+});
+
+test("lookupRecipient resolves dotpay id, username, and wallet address", async () => {
+  const tempDirPath = path.join(os.tmpdir(), `dotpaymini-lookup-${Date.now()}`);
+  await mkdir(tempDirPath, { recursive: true });
+  const filePath = path.join(tempDirPath, "users.json");
+
+  try {
+    const created = await upsertSessionUser(
+      {
+        address: "0x1111111111111111111111111111111111111111",
+        usernameHint: "@griffinworld",
+      },
+      { filePath }
+    );
+
+    const withIdentity = await setProductIdentity(
+      "0x1111111111111111111111111111111111111111",
+      "@fidelmini",
+      { filePath }
+    );
+
+    const byDotpayId = await lookupRecipient(withIdentity.dotpayId, { filePath });
+    assert.equal(byDotpayId.address, created.address);
+    assert.equal(byDotpayId.dotpayId, withIdentity.dotpayId);
+
+    const byUsername = await lookupRecipient("@fidelmini", { filePath });
+    assert.equal(byUsername.username, "fidelmini");
+
+    const byWallet = await lookupRecipient("0x1111111111111111111111111111111111111111", {
+      filePath,
+    });
+    assert.equal(byWallet.address, created.address);
+
+    await assert.rejects(() => lookupRecipient("not a valid lookup", { filePath }), /Unsupported lookup format/);
   } finally {
     await rm(tempDirPath, { recursive: true, force: true });
   }

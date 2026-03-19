@@ -2,6 +2,7 @@ const express = require("express");
 const {
   findUserByAddress,
   getPinStatus,
+  lookupRecipient,
   normalizeAddress,
   setProductIdentity,
   setUserPin,
@@ -13,6 +14,28 @@ const { requireInternalKey } = require("../middleware/requireInternalKey");
 
 const router = express.Router();
 router.use(requireInternalKey);
+
+router.get("/lookup", async (req, res) => {
+  try {
+    const query =
+      typeof req.query?.q === "string"
+        ? req.query.q
+        : typeof req.query?.query === "string"
+          ? req.query.query
+          : "";
+    const result = await lookupRecipient(query);
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 400).json({
+      success: false,
+      message: error.message || "Failed to lookup recipient.",
+    });
+  }
+});
 
 router.post("/session", async (req, res) => {
   try {

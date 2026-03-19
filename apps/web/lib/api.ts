@@ -1,4 +1,10 @@
-import type { BackendUserProfile, QuoteResult, TransactionIntent, TransactionFlowType } from "@/lib/product";
+import type {
+  BackendUserProfile,
+  QuoteResult,
+  RecipientLookupResult,
+  TransactionIntent,
+  TransactionFlowType,
+} from "@/lib/product";
 
 type Envelope<T> = {
   success: boolean;
@@ -52,6 +58,12 @@ export async function syncWalletUserProfile(input: {
 
 export async function getBackendUserProfile(address: string) {
   return apiRequest<BackendUserProfile>(`/api/users/${encodeURIComponent(address)}`);
+}
+
+export async function lookupBackendRecipient(query: string) {
+  const params = new URLSearchParams();
+  params.set("q", query);
+  return apiRequest<RecipientLookupResult>(`/api/users/lookup?${params.toString()}`);
 }
 
 export async function setBackendIdentity(address: string, username: string) {
@@ -111,13 +123,28 @@ export async function getBackendTransaction(transactionId: string) {
 async function initiateBackendMpesa(path: string, input: {
   transactionId: string;
   userAddress: string;
-  pin: string;
+  pin?: string;
+  idempotencyKey?: string | null;
+  quoteId?: string | null;
   signature?: string | null;
   signedAt?: string | null;
   nonce?: string | null;
+  onchainTxHash?: string | null;
+  chainId?: number | null;
+  phoneNumber?: string | null;
+  paybillNumber?: string | null;
+  tillNumber?: string | null;
+  accountReference?: string | null;
+  businessId?: string | null;
+  requester?: string | null;
 }) {
   return apiRequest<TransactionIntent>(path, {
     method: "POST",
+    headers: input.idempotencyKey
+      ? {
+          "Idempotency-Key": input.idempotencyKey,
+        }
+      : undefined,
     body: JSON.stringify(input),
   });
 }
@@ -126,20 +153,45 @@ export async function initiateBackendOfframp(input: {
   transactionId: string;
   userAddress: string;
   pin: string;
+  idempotencyKey?: string | null;
+  quoteId?: string | null;
   signature?: string | null;
   signedAt?: string | null;
   nonce?: string | null;
+  onchainTxHash?: string | null;
+  chainId?: number | null;
+  phoneNumber?: string | null;
+  businessId?: string | null;
 }) {
   return initiateBackendMpesa("/api/mpesa/offramp/initiate", input);
+}
+
+export async function initiateBackendOnrampStk(input: {
+  transactionId: string;
+  userAddress: string;
+  phoneNumber: string;
+  idempotencyKey?: string | null;
+  quoteId?: string | null;
+}) {
+  return initiateBackendMpesa("/api/mpesa/onramp/stk/initiate", input);
 }
 
 export async function initiateBackendPaybill(input: {
   transactionId: string;
   userAddress: string;
   pin: string;
+  idempotencyKey?: string | null;
+  quoteId?: string | null;
   signature?: string | null;
   signedAt?: string | null;
   nonce?: string | null;
+  onchainTxHash?: string | null;
+  chainId?: number | null;
+  phoneNumber?: string | null;
+  paybillNumber?: string | null;
+  accountReference?: string | null;
+  businessId?: string | null;
+  requester?: string | null;
 }) {
   return initiateBackendMpesa("/api/mpesa/merchant/paybill/initiate", input);
 }
@@ -148,9 +200,17 @@ export async function initiateBackendBuygoods(input: {
   transactionId: string;
   userAddress: string;
   pin: string;
+  idempotencyKey?: string | null;
+  quoteId?: string | null;
   signature?: string | null;
   signedAt?: string | null;
   nonce?: string | null;
+  onchainTxHash?: string | null;
+  chainId?: number | null;
+  tillNumber?: string | null;
+  accountReference?: string | null;
+  businessId?: string | null;
+  requester?: string | null;
 }) {
   return initiateBackendMpesa("/api/mpesa/merchant/buygoods/initiate", input);
 }

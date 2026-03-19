@@ -5,6 +5,7 @@ const { assertPinFormat, hashPin, verifyPin } = require("./pin");
 
 const ETH_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 const USERNAME_REGEX = /^[a-z0-9_]{3,20}$/;
+const DOTPAY_ID_REGEX = /^DP\d{9}$/i;
 const PIN_LENGTH = 6;
 
 function getUserStoreFilePath() {
@@ -127,11 +128,63 @@ function toPublicUser(user) {
   };
 }
 
+function toLookupResult(user) {
+  return {
+    address: user.address,
+    username: user.username || null,
+    worldUsername: user.worldUsername || null,
+    dotpayId: user.dotpayId || null,
+    profilePictureUrl: user.profilePictureUrl || null,
+  };
+}
+
 async function findUserByAddress(address, options = {}) {
   const filePath = options.filePath || getUserStoreFilePath();
   const users = await readUsers(filePath);
   const normalizedAddress = normalizeAddress(address);
   return users.find((user) => user.address === normalizedAddress) || null;
+}
+
+async function lookupRecipient(query, options = {}) {
+  const filePath = options.filePath || getUserStoreFilePath();
+  const users = await readUsers(filePath);
+  const q = String(query || "").trim();
+  if (!q) {
+    const error = new Error("q is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const usernameCandidate = normalizeUsernameHint(q);
+  const dotpayIdCandidate = DOTPAY_ID_REGEX.test(q) ? q.toUpperCase() : null;
+  const addressCandidate = ETH_ADDRESS_REGEX.test(q) ? normalizeAddress(q) : null;
+
+  let user = null;
+
+  if (addressCandidate) {
+    user = users.find((entry) => entry.address === addressCandidate) || null;
+  }
+
+  if (!user && dotpayIdCandidate) {
+    user = users.find((entry) => String(entry.dotpayId || "").toUpperCase() === dotpayIdCandidate) || null;
+  }
+
+  if (!user && usernameCandidate) {
+    user =
+      users.find(
+        (entry) =>
+          entry.username === usernameCandidate || entry.worldUsername === usernameCandidate
+      ) || null;
+  }
+
+  if (!user) {
+    const unsupported = !addressCandidate && !dotpayIdCandidate && !usernameCandidate;
+    const error = new Error(unsupported ? "Unsupported lookup format." : "User not found.");
+    error.statusCode = unsupported ? 400 : 404;
+    throw error;
+  }
+
+  return toLookupResult(user);
 }
 
 async function upsertSessionUser(input, options = {}) {
@@ -301,6 +354,7 @@ module.exports = {
   findUserByAddress,
   getPinStatus,
   getUserStoreFilePath,
+  lookupRecipient,
   normalizeAddress,
   normalizeProductUsername,
   normalizeUsernameHint,

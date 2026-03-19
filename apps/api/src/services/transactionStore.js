@@ -1,12 +1,14 @@
 const { mkdir, readFile, rename, writeFile } = require("fs/promises");
 const path = require("path");
-const crypto = require("crypto");
-const { buildQuote, isQuoteExpired } = require("./quoteService");
+const { buildQuote } = require("./quoteService");
 const { assertTransition, STATUSES } = require("./transactionStateMachine");
-const { normalizeAddress, verifyUserPinForAddress } = require("./userStore");
+const { normalizeAddress } = require("./userStore");
+const { mpesaConfig } = require("../config/mpesa");
+const { calculateExpectedFundingFromQuote } = require("./mpesa/verifyUsdcFunding");
 
 const FLOW_TYPES = ["onramp", "offramp", "paybill", "buygoods"];
 const MPESA_INITIATION_FLOWS = new Set(["offramp", "paybill", "buygoods"]);
+const FUNDED_FLOWS = new Set(["offramp", "paybill", "buygoods"]);
 
 function getTransactionStoreFilePath() {
   if (process.env.TRANSACTION_STORE_FILE) {
@@ -28,20 +30,6 @@ async function ensureTransactionStore(filePath = getTransactionStoreFilePath()) 
   return filePath;
 }
 
-async function readTransactions(filePath = getTransactionStoreFilePath()) {
-  const resolved = await ensureTransactionStore(filePath);
-  const raw = await readFile(resolved, "utf8");
-  const parsed = JSON.parse(raw || "[]");
-  return Array.isArray(parsed) ? parsed : [];
-}
-
-async function writeTransactions(transactions, filePath = getTransactionStoreFilePath()) {
-  const resolved = await ensureTransactionStore(filePath);
-  const tempPath = `${resolved}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tempPath, `${JSON.stringify(transactions, null, 2)}\n`, "utf8");
-  await rename(tempPath, resolved);
-}
-
 function nowIso() {
   return new Date().toISOString();
 }
@@ -52,6 +40,16 @@ function generateTransactionId() {
 }
 
 function normalizeOptionalText(value) {
+  const normalized = String(value || "").trim();
+  return normalized || null;
+}
+
+function normalizeTransactionId(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return normalized || null;
+}
+
+function normalizeQuoteId(value) {
   const normalized = String(value || "").trim();
   return normalized || null;
 }
@@ -98,108 +96,290 @@ function normalizeTargets(flowType, input) {
   };
 }
 
-function getSimulationConfig(options = {}) {
-  const enabled =
-    options.simulationEnabled !== undefined
-      ? Boolean(options.simulationEnabled)
-      : String(process.env.MPESA_SIMULATION_MODE || "true").trim().toLowerCase() !== "false";
+function requiresOnchainFunding(flowType) {
+  return FUNDED_FLOWS.has(flowType) && Boolean(mpesaConfig.settlement?.requireOnchainFunding);
+}
 
-  const delayRaw =
-    options.simulationDelayMs !== undefined
-      ? Number(options.simulationDelayMs)
-      : Number(process.env.MPESA_SIMULATION_DELAY_MS || 2500);
+function buildOnchainState(flowType, quote, existing = {}) {
+  const required = requiresOnchainFunding(flowType);
+  const existingTxHash = normalizeOptionalText(existing.txHash);
+  const existingFundedAmountUnits = normalizeOptionalText(existing.fundedAmountUnits);
+  const existingVerificationStatus = normalizeOptionalText(existing.verificationStatus);
+  let expectedAmountUnits = normalizeOptionalText(existing.expectedAmountUnits);
+  let expectedAmountUsd = Number(existing.expectedAmountUsd);
+
+  if (!Number.isFinite(expectedAmountUsd) || expectedAmountUsd <= 0) {
+    expectedAmountUsd = Number(quote?.amountUsd || 0);
+  }
+
+  if (required) {
+    try {
+      const funding = calculateExpectedFundingFromQuote(
+        quote,
+        mpesaConfig.treasury?.usdcDecimals || 6
+      );
+      expectedAmountUnits = expectedAmountUnits || funding.expectedUnitsString;
+      expectedAmountUsd = funding.expectedUsd;
+    } catch {
+      expectedAmountUnits = expectedAmountUnits || null;
+    }
+  } else {
+    const hasRecordedOnchainActivity = Boolean(existingTxHash || existingFundedAmountUnits);
+    expectedAmountUnits = hasRecordedOnchainActivity ? expectedAmountUnits || null : null;
+  }
+
+  const fundedAmountUsd = Number(existing.fundedAmountUsd);
 
   return {
-    enabled,
-    delayMs: Number.isFinite(delayRaw) ? Math.max(0, delayRaw) : 2500,
+    txHash: existingTxHash,
+    chainId: Number.isFinite(Number(existing.chainId)) ? Number(existing.chainId) : mpesaConfig.treasury?.chainId || null,
+    required,
+    verificationStatus:
+      required
+        ? existingVerificationStatus || "pending"
+        : existingVerificationStatus || (existingTxHash ? "verified" : "not_required"),
+    tokenAddress:
+      normalizeOptionalText(existing.tokenAddress) ||
+      normalizeOptionalText(mpesaConfig.treasury?.usdcContract),
+    tokenSymbol: normalizeOptionalText(existing.tokenSymbol) || "USDC",
+    treasuryAddress:
+      normalizeOptionalText(existing.treasuryAddress) ||
+      normalizeOptionalText(mpesaConfig.treasury?.address),
+    expectedAmountUsd,
+    expectedAmountUnits,
+    fundedAmountUsd: Number.isFinite(fundedAmountUsd) ? fundedAmountUsd : 0,
+    fundedAmountUnits: normalizeOptionalText(existing.fundedAmountUnits),
+    fromAddress: normalizeOptionalText(existing.fromAddress),
+    toAddress: normalizeOptionalText(existing.toAddress),
+    logIndex: Number.isFinite(Number(existing.logIndex)) ? Number(existing.logIndex) : null,
+    verifiedBy: normalizeOptionalText(existing.verifiedBy),
+    verificationError: normalizeOptionalText(existing.verificationError),
+    verifiedAt: normalizeOptionalText(existing.verifiedAt),
   };
 }
 
-function createSimulationDetails(transaction) {
-  const seed = transaction.transactionId.slice(-8);
+function buildDarajaState(existing = {}) {
   return {
-    merchantRequestId: `MR${seed}`,
-    checkoutRequestId: transaction.flowType === "offramp" ? null : `CR${seed}`,
-    conversationId: `CV${seed}`,
-    originatorConversationId: `OC${seed}`,
-    responseCode: "0",
-    responseDescription: "Accepted for simulated processing.",
-    resultCode: null,
-    resultCodeRaw: null,
-    resultDesc: null,
-    receiptNumber: null,
-    customerMessage: "Request accepted for processing.",
-    callbackReceivedAt: null,
+    merchantRequestId: normalizeOptionalText(existing.merchantRequestId),
+    checkoutRequestId: normalizeOptionalText(existing.checkoutRequestId),
+    conversationId: normalizeOptionalText(existing.conversationId),
+    originatorConversationId: normalizeOptionalText(existing.originatorConversationId),
+    responseCode: normalizeOptionalText(existing.responseCode),
+    responseDescription: normalizeOptionalText(existing.responseDescription),
+    resultCode: Number.isFinite(Number(existing.resultCode)) ? Number(existing.resultCode) : null,
+    resultCodeRaw: normalizeOptionalText(existing.resultCodeRaw),
+    resultDesc: normalizeOptionalText(existing.resultDesc),
+    receiptNumber: normalizeOptionalText(existing.receiptNumber),
+    customerMessage: normalizeOptionalText(existing.customerMessage),
+    callbackReceivedAt: normalizeOptionalText(existing.callbackReceivedAt),
+    rawRequest: existing.rawRequest || null,
+    rawResponse: existing.rawResponse || null,
+    rawCallback: existing.rawCallback || null,
   };
 }
 
-function ensureMetadata(transaction) {
+function buildRefundState(existing = {}) {
+  return {
+    status: normalizeOptionalText(existing.status) || "none",
+    reason: normalizeOptionalText(existing.reason),
+    txHash: normalizeOptionalText(existing.txHash),
+    initiatedAt: normalizeOptionalText(existing.initiatedAt),
+    completedAt: normalizeOptionalText(existing.completedAt),
+  };
+}
+
+function ensureMetadataExtra(transaction) {
   transaction.metadata = transaction.metadata || {};
-  transaction.metadata.extra = transaction.metadata.extra || {};
+  transaction.metadata.source = normalizeOptionalText(transaction.metadata.source) || "miniapp";
+  transaction.metadata.ipAddress = normalizeOptionalText(transaction.metadata.ipAddress);
+  transaction.metadata.userAgent = normalizeOptionalText(transaction.metadata.userAgent);
+  transaction.metadata.tags = Array.isArray(transaction.metadata.tags)
+    ? transaction.metadata.tags.slice(0, 20)
+    : [];
+
+  const currentExtra = transaction.metadata.extra;
+  if (!currentExtra || typeof currentExtra !== "object" || Array.isArray(currentExtra)) {
+    transaction.metadata.extra = {};
+  }
+
   return transaction.metadata.extra;
 }
 
-function finalizeSimulatedSuccess(transaction) {
-  if (transaction.status !== "mpesa_processing") return false;
-
-  const extra = ensureMetadata(transaction);
-  const simulation = extra.mpesaSimulation;
-  if (!simulation || !simulation.resolveAt) return false;
-  if (new Date(simulation.resolveAt).getTime() > Date.now()) return false;
-
-  assertTransition(transaction, "succeeded", "Simulated M-Pesa callback received.", "simulation");
-  transaction.updatedAt = nowIso();
-  transaction.daraja = {
-    ...transaction.daraja,
-    resultCode: 0,
-    resultCodeRaw: "0",
-    resultDesc: "The service request is processed successfully.",
-    receiptNumber: `RCP${transaction.transactionId.slice(-8)}`,
-    customerMessage: "Simulated M-Pesa payout completed.",
-    callbackReceivedAt: nowIso(),
+function hydrateStoredTransaction(transaction) {
+  const flowType = normalizeFlowType(transaction.flowType);
+  const next = {
+    ...transaction,
+    transactionId: normalizeTransactionId(transaction.transactionId),
+    flowType,
+    status: normalizeStatus(transaction.status),
+    userAddress: normalizeAddress(transaction.userAddress),
+    businessId: normalizeOptionalText(transaction.businessId),
+    idempotencyKey: normalizeOptionalText(transaction.idempotencyKey),
+    targets: {
+      phoneNumber: normalizeOptionalText(transaction.targets?.phoneNumber),
+      paybillNumber: normalizeOptionalText(transaction.targets?.paybillNumber),
+      tillNumber: normalizeOptionalText(transaction.targets?.tillNumber),
+      accountReference: normalizeOptionalText(transaction.targets?.accountReference),
+    },
+    authorization: {
+      pinProvided: Boolean(transaction.authorization?.pinProvided),
+      signature: normalizeOptionalText(transaction.authorization?.signature),
+      signedAt: normalizeOptionalText(transaction.authorization?.signedAt),
+      nonce: normalizeOptionalText(transaction.authorization?.nonce),
+    },
+    history: Array.isArray(transaction.history) ? transaction.history : [],
+    createdAt: normalizeOptionalText(transaction.createdAt) || nowIso(),
+    updatedAt: normalizeOptionalText(transaction.updatedAt) || normalizeOptionalText(transaction.createdAt) || nowIso(),
   };
-  extra.mpesaSimulation = {
-    ...simulation,
-    finalizedAt: transaction.updatedAt,
-    finalStatus: "succeeded",
-  };
-  return true;
+
+  next.onchain = buildOnchainState(flowType, next.quote, transaction.onchain || {});
+  next.daraja = buildDarajaState(transaction.daraja || {});
+  next.refund = buildRefundState(transaction.refund || {});
+  ensureMetadataExtra(next);
+
+  return next;
 }
 
-async function hydrateSimulatedTransactions(transactions, filePath, options = {}) {
-  let changed = false;
-  for (const transaction of transactions) {
-    if (finalizeSimulatedSuccess(transaction)) {
-      changed = true;
-    }
-  }
+async function readTransactions(filePath = getTransactionStoreFilePath()) {
+  const resolved = await ensureTransactionStore(filePath);
+  const raw = await readFile(resolved, "utf8");
+  const parsed = JSON.parse(raw || "[]");
+  if (!Array.isArray(parsed)) return [];
+  return parsed.map(hydrateStoredTransaction);
+}
 
-  if (changed) {
-    await writeTransactions(transactions, filePath || getTransactionStoreFilePath());
-  }
+async function writeTransactions(transactions, filePath = getTransactionStoreFilePath()) {
+  const resolved = await ensureTransactionStore(filePath);
+  const tempPath = `${resolved}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tempPath, `${JSON.stringify(transactions, null, 2)}\n`, "utf8");
+  await rename(tempPath, resolved);
+}
 
-  return transactions;
+function applyFundingDefaults(transaction) {
+  transaction.onchain = buildOnchainState(transaction.flowType, transaction.quote, transaction.onchain || {});
+  return transaction.onchain;
 }
 
 function toPublicTransaction(transaction) {
+  const hydrated = hydrateStoredTransaction(transaction);
   return {
-    transactionId: transaction.transactionId,
-    flowType: transaction.flowType,
-    status: transaction.status,
-    userAddress: transaction.userAddress,
-    businessId: transaction.businessId,
-    idempotencyKey: transaction.idempotencyKey,
-    quote: transaction.quote,
-    targets: transaction.targets,
-    authorization: transaction.authorization,
-    onchain: transaction.onchain,
-    daraja: transaction.daraja,
-    refund: transaction.refund,
-    history: transaction.history || [],
-    metadata: transaction.metadata,
-    createdAt: transaction.createdAt,
-    updatedAt: transaction.updatedAt,
+    transactionId: hydrated.transactionId,
+    flowType: hydrated.flowType,
+    status: hydrated.status,
+    userAddress: hydrated.userAddress,
+    businessId: hydrated.businessId,
+    idempotencyKey: hydrated.idempotencyKey,
+    quote: hydrated.quote,
+    targets: hydrated.targets,
+    authorization: hydrated.authorization,
+    onchain: hydrated.onchain,
+    daraja: {
+      merchantRequestId: hydrated.daraja.merchantRequestId,
+      checkoutRequestId: hydrated.daraja.checkoutRequestId,
+      conversationId: hydrated.daraja.conversationId,
+      originatorConversationId: hydrated.daraja.originatorConversationId,
+      responseCode: hydrated.daraja.responseCode,
+      responseDescription: hydrated.daraja.responseDescription,
+      resultCode: hydrated.daraja.resultCode,
+      resultCodeRaw: hydrated.daraja.resultCodeRaw,
+      resultDesc: hydrated.daraja.resultDesc,
+      receiptNumber: hydrated.daraja.receiptNumber,
+      customerMessage: hydrated.daraja.customerMessage,
+      callbackReceivedAt: hydrated.daraja.callbackReceivedAt,
+    },
+    refund: hydrated.refund,
+    history: hydrated.history || [],
+    metadata: hydrated.metadata,
+    createdAt: hydrated.createdAt,
+    updatedAt: hydrated.updatedAt,
   };
+}
+
+function matchesTransactionLookup(entry, lookup = {}) {
+  if (lookup.transactionId) {
+    if (entry.transactionId !== normalizeTransactionId(lookup.transactionId)) return false;
+  }
+  if (lookup.quoteId) {
+    if (entry.quote?.quoteId !== normalizeQuoteId(lookup.quoteId)) return false;
+  }
+  if (lookup.userAddress) {
+    if (entry.userAddress !== normalizeAddress(lookup.userAddress)) return false;
+  }
+  if (lookup.flowType) {
+    if (entry.flowType !== normalizeFlowType(lookup.flowType)) return false;
+  }
+  if (lookup.idempotencyKey) {
+    if (entry.idempotencyKey !== normalizeOptionalText(lookup.idempotencyKey)) return false;
+  }
+
+  return true;
+}
+
+async function findTransactionContext(lookup = {}, options = {}) {
+  const filePath = options.filePath || getTransactionStoreFilePath();
+  const transactions = await readTransactions(filePath);
+  const index = transactions.findIndex((entry) => matchesTransactionLookup(entry, lookup));
+
+  if (index === -1) return null;
+
+  return {
+    filePath,
+    index,
+    transaction: transactions[index],
+    transactions,
+  };
+}
+
+async function findTransactionContextByWebhookRefs(lookup = {}, options = {}) {
+  const filePath = options.filePath || getTransactionStoreFilePath();
+  const transactions = await readTransactions(filePath);
+  const normalizedTxId = normalizeTransactionId(lookup.transactionId);
+
+  if (normalizedTxId) {
+    const directIndex = transactions.findIndex((entry) => entry.transactionId === normalizedTxId);
+    if (directIndex !== -1) {
+      return {
+        filePath,
+        index: directIndex,
+        transaction: transactions[directIndex],
+        transactions,
+      };
+    }
+  }
+
+  const refs = [
+    normalizeOptionalText(lookup.checkoutRequestId),
+    normalizeOptionalText(lookup.merchantRequestId),
+    normalizeOptionalText(lookup.conversationId),
+    normalizeOptionalText(lookup.originatorConversationId),
+  ].filter(Boolean);
+
+  if (refs.length === 0) return null;
+
+  const index = transactions.findIndex((entry) => {
+    const daraja = entry.daraja || {};
+    return refs.includes(daraja.checkoutRequestId) ||
+      refs.includes(daraja.merchantRequestId) ||
+      refs.includes(daraja.conversationId) ||
+      refs.includes(daraja.originatorConversationId);
+  });
+
+  if (index === -1) return null;
+
+  return {
+    filePath,
+    index,
+    transaction: transactions[index],
+    transactions,
+  };
+}
+
+async function saveTransactionContext(context) {
+  context.transaction = hydrateStoredTransaction(context.transaction);
+  context.transaction.updatedAt = nowIso();
+  context.transactions[context.index] = context.transaction;
+  await writeTransactions(context.transactions, context.filePath);
+  return toPublicTransaction(context.transaction);
 }
 
 async function createQuotedTransaction(input, options = {}) {
@@ -234,7 +414,7 @@ async function createQuotedTransaction(input, options = {}) {
   });
 
   const now = nowIso();
-  const transaction = {
+  const transaction = hydrateStoredTransaction({
     transactionId: generateTransactionId(),
     flowType,
     status: "created",
@@ -249,46 +429,9 @@ async function createQuotedTransaction(input, options = {}) {
       signedAt: null,
       nonce: null,
     },
-    onchain: {
-      txHash: null,
-      chainId: null,
-      required: flowType !== "onramp",
-      verificationStatus: flowType === "onramp" ? "not_required" : "pending",
-      tokenAddress: null,
-      tokenSymbol: "USDC",
-      treasuryAddress: null,
-      expectedAmountUsd: quote.amountUsd,
-      expectedAmountUnits: null,
-      fundedAmountUsd: 0,
-      fundedAmountUnits: null,
-      fromAddress: null,
-      toAddress: null,
-      logIndex: null,
-      verifiedBy: null,
-      verificationError: null,
-      verifiedAt: null,
-    },
-    daraja: {
-      merchantRequestId: null,
-      checkoutRequestId: null,
-      conversationId: null,
-      originatorConversationId: null,
-      responseCode: null,
-      responseDescription: null,
-      resultCode: null,
-      resultCodeRaw: null,
-      resultDesc: null,
-      receiptNumber: null,
-      customerMessage: null,
-      callbackReceivedAt: null,
-    },
-    refund: {
-      status: "none",
-      reason: null,
-      txHash: null,
-      initiatedAt: null,
-      completedAt: null,
-    },
+    onchain: buildOnchainState(flowType, quote),
+    daraja: buildDarajaState(),
+    refund: buildRefundState(),
     history: [
       {
         from: null,
@@ -303,11 +446,11 @@ async function createQuotedTransaction(input, options = {}) {
       ipAddress: normalizeOptionalText(input.metadata?.ipAddress),
       userAgent: normalizeOptionalText(input.metadata?.userAgent),
       tags: Array.isArray(input.metadata?.tags) ? input.metadata.tags.slice(0, 10) : [],
-      extra: input.metadata?.extra || null,
+      extra: input.metadata?.extra || {},
     },
     createdAt: now,
     updatedAt: now,
-  };
+  });
 
   assertTransition(transaction, "quoted", "Quote created.", "quote-service");
   transaction.updatedAt = nowIso();
@@ -323,19 +466,13 @@ async function createQuotedTransaction(input, options = {}) {
 }
 
 async function getTransactionById(transactionId, options = {}) {
-  const filePath = options.filePath || getTransactionStoreFilePath();
-  const transactions = await readTransactions(filePath);
-  await hydrateSimulatedTransactions(transactions, filePath, options);
-  const normalized = String(transactionId || "").trim().toUpperCase();
-  const transaction = transactions.find((entry) => entry.transactionId === normalized);
-  return transaction ? toPublicTransaction(transaction) : null;
+  const context = await findTransactionContext({ transactionId }, options);
+  return context ? toPublicTransaction(context.transaction) : null;
 }
 
 async function listTransactions(filters = {}, options = {}) {
   const filePath = options.filePath || getTransactionStoreFilePath();
-  const transactions = await readTransactions(filePath);
-  await hydrateSimulatedTransactions(transactions, filePath, options);
-  let results = [...transactions];
+  let results = await readTransactions(filePath);
 
   if (filters.userAddress) {
     results = results.filter((entry) => entry.userAddress === normalizeAddress(filters.userAddress));
@@ -355,136 +492,34 @@ async function listTransactions(filters = {}, options = {}) {
 }
 
 async function transitionTransaction(transactionId, to, reason, source = "system", options = {}) {
-  const filePath = options.filePath || getTransactionStoreFilePath();
-  const transactions = await readTransactions(filePath);
-  const normalizedId = String(transactionId || "").trim().toUpperCase();
-  const index = transactions.findIndex((entry) => entry.transactionId === normalizedId);
-
-  if (index === -1) {
+  const context = await findTransactionContext({ transactionId }, options);
+  if (!context) {
     const error = new Error("Transaction not found.");
     error.statusCode = 404;
     throw error;
   }
 
-  const transaction = transactions[index];
-  assertTransition(transaction, normalizeStatus(to), reason, source);
-  transaction.updatedAt = nowIso();
-
-  transactions[index] = transaction;
-  await writeTransactions(transactions, filePath);
-  return toPublicTransaction(transaction);
-}
-
-async function initiateMpesaTransaction(input, options = {}) {
-  const filePath = options.filePath || getTransactionStoreFilePath();
-  const transactions = await readTransactions(filePath);
-  await hydrateSimulatedTransactions(transactions, filePath, options);
-
-  const transactionId = String(input.transactionId || "").trim().toUpperCase();
-  const userAddress = normalizeAddress(input.userAddress);
-  const flowType = normalizeFlowType(input.flowType);
-  const pin = String(input.pin || "").trim();
-  const signature = normalizeOptionalText(input.signature);
-  const nonce = normalizeOptionalText(input.nonce);
-  const signedAt = normalizeOptionalText(input.signedAt) || nowIso();
-
-  if (!MPESA_INITIATION_FLOWS.has(flowType)) {
-    throw new Error("Only cashout, paybill, and till initiation are supported in this slice.");
-  }
-
-  const index = transactions.findIndex((entry) => entry.transactionId === transactionId);
-  if (index === -1) {
-    const error = new Error("Transaction not found.");
-    error.statusCode = 404;
-    throw error;
-  }
-
-  const transaction = transactions[index];
-  if (transaction.userAddress !== userAddress) {
-    const error = new Error("Unauthorized.");
-    error.statusCode = 401;
-    throw error;
-  }
-  if (transaction.flowType !== flowType) {
-    throw new Error("Transaction flow does not match the initiation route.");
-  }
-  if (isQuoteExpired(transaction.quote)) {
-    throw new Error("Quote has expired. Please generate a new quote.");
-  }
-  if (transaction.status === "succeeded") {
-    return toPublicTransaction(transaction);
-  }
-  if (transaction.status === "mpesa_processing" || transaction.status === "mpesa_submitted") {
-    return toPublicTransaction(transaction);
-  }
-
-  const verified = await verifyUserPinForAddress(userAddress, pin, {
-    filePath: options.userStoreFilePath,
-  });
-  if (!verified) {
-    const error = new Error("Invalid PIN.");
-    error.statusCode = 401;
-    throw error;
-  }
-
-  transaction.authorization = {
-    pinProvided: true,
-    signature,
-    signedAt,
-    nonce,
-  };
-
-  if (transaction.status === "quoted") {
-    assertTransition(transaction, "awaiting_user_authorization", "User approved request with PIN.", "api");
-  }
-
-  if (transaction.onchain?.required && transaction.status === "awaiting_user_authorization") {
-    assertTransition(transaction, "awaiting_onchain_funding", "Waiting for on-chain funding.", "api");
-  }
-
-  if (transaction.status === "awaiting_onchain_funding") {
-    transaction.onchain = {
-      ...transaction.onchain,
-      verificationStatus: "verified",
-      fundedAmountUsd: transaction.onchain.expectedAmountUsd,
-      verifiedAt: nowIso(),
-      verifiedBy: "simulation",
-      verificationError: null,
-    };
-    assertTransition(transaction, "mpesa_submitted", "Simulated funding verified and request submitted.", "simulation");
-  } else if (transaction.status === "awaiting_user_authorization") {
-    assertTransition(transaction, "mpesa_submitted", "Request submitted.", "api");
-  }
-
-  if (transaction.status === "mpesa_submitted") {
-    assertTransition(transaction, "mpesa_processing", "Awaiting M-Pesa callback.", "api");
-  }
-
-  transaction.daraja = createSimulationDetails(transaction);
-  const simulation = getSimulationConfig(options);
-  const extra = ensureMetadata(transaction);
-  extra.mpesaSimulation = {
-    enabled: simulation.enabled,
-    resolveAt: new Date(Date.now() + simulation.delayMs).toISOString(),
-    finalStatus: "succeeded",
-    initiatedAt: nowIso(),
-  };
-  transaction.updatedAt = nowIso();
-
-  transactions[index] = transaction;
-  await writeTransactions(transactions, filePath);
-  return toPublicTransaction(transaction);
+  assertTransition(context.transaction, normalizeStatus(to), reason, source);
+  return saveTransactionContext(context);
 }
 
 module.exports = {
   FLOW_TYPES,
   MPESA_INITIATION_FLOWS,
   STATUSES,
+  applyFundingDefaults,
   createQuotedTransaction,
+  ensureMetadataExtra,
+  findTransactionContext,
+  findTransactionContextByWebhookRefs,
   getTransactionById,
   getTransactionStoreFilePath,
-  initiateMpesaTransaction,
   listTransactions,
+  nowIso,
+  readTransactions,
+  requiresOnchainFunding,
+  saveTransactionContext,
   toPublicTransaction,
   transitionTransaction,
+  writeTransactions,
 };

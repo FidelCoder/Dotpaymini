@@ -335,7 +335,7 @@ button {
   width: min(calc(100% - 20px), 440px);
   padding: 10px;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   border-radius: 28px;
   background: rgba(7, 16, 25, 0.92);

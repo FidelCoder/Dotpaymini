@@ -120,8 +120,8 @@ export function HomeScreen({ session }: { session: ProductSession | null }) {
           <div>
             <h2 className="panel-title">Foundation status</h2>
             <p className="panel-copy">
-              The repo is now structured as one monorepo. Wallet Auth is wired, docs are in place, and the next port is
-              the shared transaction intent and M-Pesa state machine.
+              The repo is now structured as one monorepo. Wallet Auth is wired, docs are in place, and outbound M-Pesa
+              flows now run through real Daraja submission plus callback-driven transaction tracking.
             </p>
           </div>
         </div>

@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 const tabs = [
   { href: "/", icon: "◉", label: "Home" },
   { href: "/send", icon: "↑", label: "Send" },
+  { href: "/receive", icon: "↓", label: "Receive" },
   { href: "/pay", icon: "◎", label: "Pay" },
   { href: "/activity", icon: "≣", label: "Activity" },
   { href: "/settings", icon: "⚙", label: "Settings" },

@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const { mpesaRouter } = require("./routes/mpesa");
+const { mpesaWebhooksRouter } = require("./routes/mpesa-webhooks");
 const { transactionsRouter } = require("./routes/transactions");
 const { usersRouter } = require("./routes/users");
 
@@ -42,8 +43,8 @@ const capabilities = [
   {
     id: "mpesa-engine",
     label: "M-Pesa engine",
-    status: "building",
-    detail: "Quote creation, transaction IDs, initiation simulation, and polling foundations are in place. Live Daraja submission is next.",
+    status: "live",
+    detail: "Real Daraja submission, callback-driven status updates, and on-chain funding proof verification are wired for outbound M-Pesa flows.",
   },
   {
     id: "world-pay",
@@ -69,6 +70,7 @@ app.get("/api/capabilities", (_req, res) => {
 });
 
 app.use("/api/users", usersRouter);
+app.use("/api/mpesa", mpesaWebhooksRouter);
 app.use("/api/mpesa", mpesaRouter);
 app.use("/api/transactions", transactionsRouter);
 
@@ -78,7 +80,7 @@ app.get("/api/parity", (_req, res) => {
     sourceRepos: ["DotPayFE", "DotPayBE"],
     targetRepo: "Dotpaymini",
     strategy: "single-monorepo-two-apps",
-    nextPort: "live-daraja-submission-and-receipts",
+    nextPort: "world-wallet-transfer-leg-and-stk-onramp",
   });
 });
 
